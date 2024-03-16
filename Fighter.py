@@ -50,6 +50,7 @@ class Fighter:
         self.jump_speed = jump_speed
         self.pos_x = position[0]
         self.pos_y = position[1]
+
         # self.contact = [False, False, False, False]
         self.canMoveRange = [0, position[1], self.max_pos_x - position[0],position[0]]
         self.player_move = [False, False, False, False]

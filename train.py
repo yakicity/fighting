@@ -38,7 +38,7 @@ class Observer(object):
         print(state)
         return self.preprocess(state), reward, done, info
     def preprocess(self, state):
-        return state.reshape((1, 9))
+        return state.reshape((1, 11))
 
 class ReplayBuffer:
     def __init__(self, buffer_size, batch_size):
@@ -155,8 +155,8 @@ if __name__ == "__main__":
     state = observer.reset() # observerを初期化し、前処理済みの初期状態を返す
 
     # ---------------
-    agent.load_models()
-    # agent.initialize() # モデルを初期化
+    # agent.load_models()
+    agent.initialize() # モデルを初期化
     # ---------------
 
     for episode in range(num_episodes):

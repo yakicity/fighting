@@ -90,6 +90,7 @@ class MyEnv(gym.Env):
 
         self.player1_color = (200,100,0)
         self.player2_color = (100,180,250)
+        self.player_max_damage = 390
 
         # アクション数定義
         # 移動：「左」「右」「上」「移動なし」，攻撃：「する」「しない」
@@ -98,13 +99,13 @@ class MyEnv(gym.Env):
         self.render_mode = render_mode
 
         # 状態の範囲を定義,inattackrangeが１のときはどちらもアタックできる距離にある
-        # 水平距離，垂直距離，P1x,P1y,P2x,P2y,inatackrange,p1cooldown,p2cooldown,p1canjump,p2canjupm
+        # 水平距離，垂直距離，P1x,P1y,P2x,P2y,inatackrange,p1cooldown,p2cooldown,p1damage,p2damage
         max_distancex = self.window_x - self.size[0]
         max_distancey = self.stage_pos[1] - self.size[1]
         max_x = self.window_x - self.size[0]
         max_y = self.stage_pos[1] - self.size[1]
-        LOW = np.array([0,0,0,0,0,0,0,0,0])
-        HIGH = np.array([max_distancex,max_distancey,max_x,max_y,max_x,max_y,1,RIGIT_MAX,RIGIT_MAX])
+        LOW = np.array([0,0,0,0,0,0,0,0,0,0,0])
+        HIGH = np.array([max_distancex,max_distancey,max_x,max_y,max_x,max_y,1,RIGIT_MAX,RIGIT_MAX,self.player_max_damage,self.player_max_damage])
         self.observation_space = gym.spaces.Box(low=LOW, high=HIGH)
         # 即時報酬の値
         self.reward_range = (-50,50)
@@ -124,7 +125,7 @@ class MyEnv(gym.Env):
         self.player2 = Fighter(self.size, self.gravity, self.move_speed,self.jump_speed,player2_pos,direction2)
 
         #初期化
-        observation=[player1_pos[0]-player2_pos[0],player1_pos[1]-player2_pos[1],player1_pos[0],player1_pos[1],player2_pos[0],player2_pos[1],0,0,0]
+        observation=[player1_pos[0]-player2_pos[0],player1_pos[1]-player2_pos[1],player1_pos[0],player1_pos[1],player2_pos[0],player2_pos[1],0,0,0,0,0]
         return np.array(observation, dtype=np.float32), {}
 
     def step(self, action_index):
@@ -172,10 +173,10 @@ class MyEnv(gym.Env):
         #     reward -= 1
 
         # 死んだかどうかで報酬変化
-        if self.player1.damage >= 390:
+        if self.player1.damage >= self.player_max_damage:
             reward = -30
             done = True
-        if self.player2.damage >= 390:
+        if self.player2.damage >= self.player_max_damage:
             reward = 30
             done = True
 
@@ -206,14 +207,16 @@ class MyEnv(gym.Env):
                      self.player2.pos_y,
                      inattackrange,
                      self.player1.rigit_time,
-                     self.player2.rigit_time]
+                     self.player2.rigit_time,
+                     self.player1.damage,
+                     self.player2.damage]
 
 
         if done == False:
-            reward -= 0.5
+            reward -= 1
             # 敵との距離で報酬変化
             dist_x = abs(self.player1.pos_x - self.player2.pos_x)
-            reward -= dist_x / 1000
+            reward -= dist_x / 100
 
         # 今回の例ではtruncatedは使用しない
         truncated = False
@@ -261,11 +264,11 @@ class MyEnv(gym.Env):
 
         # lifeゲージの描画
         gfxdraw.rectangle(self.surf, (570, 20, 400, 30), (120, 120, 120))
-        if self.player1.damage < 390:
-            gfxdraw.box(self.surf, (575, 25, 390 - self.player1.damage, 20),self.player1_color)
+        if self.player1.damage < self.player_max_damage:
+            gfxdraw.box(self.surf, (575, 25, self.player_max_damage - self.player1.damage, 20),self.player1_color)
         gfxdraw.rectangle(self.surf, (30, 20, 400, 30), (120, 120, 120))
-        if self.player2.damage < 390:
-            gfxdraw.rectangle(self.surf, (35 + self.player2.damage, 25, 390 - self.player2.damage, 20),self.player2_color)
+        if self.player2.damage < self.player_max_damage:
+            gfxdraw.box(self.surf, (35 + self.player2.damage, 25, self.player_max_damage - self.player2.damage, 20),self.player2_color)
 
         self.surf = pygame.transform.flip(self.surf, False, False)
         self.screen.blit(self.surf, (0, 0))
