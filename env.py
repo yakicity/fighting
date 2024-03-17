@@ -162,9 +162,9 @@ class MyEnv(gym.Env):
         reward = 0
         # 攻撃したかどうかで報酬変化
         if any(self.player2.hit_judg):
-            reward += 5
+            reward += 10
         if any(self.player1.hit_judg):
-            reward -= 5
+            reward -= 10
 
         # 攻撃が不発なら報酬変化
         if self.player1.misfire:
@@ -222,7 +222,7 @@ class MyEnv(gym.Env):
         truncated = False
         # 今回の例ではinfoは使用しない
         info = {}
-        print(reward)
+        # print(reward)
         return np.array(observation, dtype=np.float32),reward,done,truncated,info
 
     def render(self):
