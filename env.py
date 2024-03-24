@@ -10,10 +10,6 @@ from collections import deque
 import random
 import numpy as np
 import gymnasium as gym
-# ニューラルネットワークモデルのインポート
-from sklearn.neural_network import MLPRegressor
-# ACAgentクラスの作成
-from sklearn.exceptions import NotFittedError
 import joblib
 
 from Fighter import Fighter
@@ -65,6 +61,7 @@ class MyEnv(gym.Env):
 
     # def __init__(self,models,is_cpu,render_mode: Optional[str] = None):
     def __init__(self,render_mode: Optional[str] = None):
+
         # action_space ：エージェントが取りうる行動空間を定義
         # observation_space：エージェントが受け取りうる観測空間を定義
         # reward_range ：報酬の範囲[最小値と最大値]を定義
@@ -77,7 +74,7 @@ class MyEnv(gym.Env):
 
         # self.models = models
         # self.is_cpu = is_cpu
-        RIGIT_MAX = 80
+        RIGIT_MAX = 200
         self.jump_speed = 30  # <= ジャンプの初速度
         self.gravity = 16
         self.move_speed = 10
@@ -87,6 +84,8 @@ class MyEnv(gym.Env):
 
         self.player1 = None
         self.player2 = None
+
+        self.meind = 1
 
         self.player1_color = (200,100,0)
         self.player2_color = (100,180,250)
@@ -100,35 +99,48 @@ class MyEnv(gym.Env):
 
         # 状態の範囲を定義,inattackrangeが１のときはどちらもアタックできる距離にある
         # 水平距離，垂直距離，P1x,P1y,P2x,P2y,inatackrange,p1cooldown,p2cooldown,p1damage,p2damage
+        # 水平距離，垂直距離，P1x,P1y,P2x,P2y,p1cooldown,p2cooldown,p1damage,p2damage
         max_distancex = self.window_x - self.size[0]
         max_distancey = self.stage_pos[1] - self.size[1]
         max_x = self.window_x - self.size[0]
         max_y = self.stage_pos[1] - self.size[1]
-        LOW = np.array([0,0,0,0,0,0,0,0,0,0,0])
+        # LOW = np.array([0,0,0,0,0,0,0,0,0,0,0])
+        # HIGH = np.array([max_distancex,max_distancey,max_x,max_y,max_x,max_y,1,RIGIT_MAX,RIGIT_MAX,self.player_max_damage,self.player_max_damage])
+        LOW = np.array([-max_distancex,-max_distancey,0,0,0,0,0,0,0,0,0])
         HIGH = np.array([max_distancex,max_distancey,max_x,max_y,max_x,max_y,1,RIGIT_MAX,RIGIT_MAX,self.player_max_damage,self.player_max_damage])
         self.observation_space = gym.spaces.Box(low=LOW, high=HIGH)
         # 即時報酬の値
-        self.reward_range = (-50,50)
-        self.reset()
+        self.reward_range = (-10,10)
+        # self.reset()
 
-    def reset(self):
+    def reset(self,meind):
         # 環境を初期状態にする関数
         # 初期状態をreturnする
         # リセットの際に、乱数seedのリセットはしてはいけないので注意してください。
-        player1_pos = [600, 470]  # <= 操作キャラの位置
-        direction1 =3 #キャラの方向，0=上,1=した,2=右.3=左
+        self.meind = meind
+        if meind == 1:
+            player1_pos = [600, 470]  # <= 操作キャラの位置
+            direction1 =3 #キャラの方向，0=上,1=した,2=右.3=左
 
-        player2_pos = [200, 470]
-        direction2 =2 #キャラの方向，0=上,1=した,2=右.3=左
+            player2_pos = [200, 470]
+            direction2 =2 #キャラの方向，0=上,1=した,2=右.3=左
+        else:
+            player2_pos = [600, 470]  # <= 操作キャラの位置
+            direction2 =3 #キャラの方向，0=上,1=した,2=右.3=左
+
+            player1_pos = [200, 470]
+            direction1 =2 #キャラの方向，0=上,1=した,2=右.3=左
 
         self.player1 = Fighter(self.size, self.gravity, self.move_speed,self.jump_speed,player1_pos,direction1)
         self.player2 = Fighter(self.size, self.gravity, self.move_speed,self.jump_speed,player2_pos,direction2)
+        distx = self.player1.pos_x - self.player2.pos_x
+
 
         #初期化
-        observation=[player1_pos[0]-player2_pos[0],player1_pos[1]-player2_pos[1],player1_pos[0],player1_pos[1],player2_pos[0],player2_pos[1],0,0,0,0,0]
+        observation=[distx,0,player1_pos[0],player1_pos[1],player2_pos[0],player2_pos[1],0,0,0,0,0]
         return np.array(observation, dtype=np.float32), {}
-
-    def step(self, action_index):
+    def step(self, action_indexs,t):
+        # action_indexs:player1のactionindex,player2のactionindex,
         # 行動を受け取り行動後の状態をreturnする
         # stepメソッドは、action_spaceで定義された型に沿った行動値を受け取り、環境を1ステップだけ進めます。
         # 進めた後の観測、報酬、終了判定、その他の情報を生成し、リターンします。
@@ -142,9 +154,14 @@ class MyEnv(gym.Env):
 
         done=False
 
-        self.player1.controlfromAction(action_index)
+
+        old_me_x = self.player1.pos_x
+        old_enemy_x = self.player2.pos_x
+
+        self.player1.controlfromAction(action_indexs[0])
+        self.player2.controlfromAction(action_indexs[1])
         # self.player2.controlrandomNotAction()
-        self.player2.controlrandom()
+        # self.player2.controlrandom()
         # control_character_random(self.player2)
 
         self.player1.contact_judgment(self.player2)
@@ -160,24 +177,25 @@ class MyEnv(gym.Env):
         self.player2.character_action(self.player1)
 
         reward = 0
+
         # 攻撃したかどうかで報酬変化
         if any(self.player2.hit_judg):
-            reward += 10
+            reward += 4
         if any(self.player1.hit_judg):
-            reward -= 10
-
+            reward -= 3
         # 攻撃が不発なら報酬変化
-        if self.player1.misfire:
-            reward -= 2
-        # if self.player2.misfire:
-        #     reward -= 1
-
+        # if self.player1.misfire:
+        #     reward -= -2
+        # if enemy.misfire:
+        #     reward += 2
         # 死んだかどうかで報酬変化
         if self.player1.damage >= self.player_max_damage:
-            reward = -30
+            reward = -10
+            print("lose----------------------------------------------")
             done = True
         if self.player2.damage >= self.player_max_damage:
-            reward = 30
+            reward = 10
+            print("win----------------------------------------------")
             done = True
 
         self.player1.hit_action()
@@ -196,11 +214,9 @@ class MyEnv(gym.Env):
         if 0 <= dist(circle_pos,enemy_hit_pos) <= self.radius + self.player2.height / 2:
             inattackrange = 1
 
-        # p1canjump = 1 if self.player1.canMoveRange[0] == 0 else 0
-        # p2canjump = 1 if self.player2.canMoveRange[0] == 0 else 0
         # 水平距離，垂直距離，P1x,P1y,P2x,P2y,inattackrange,p1cooldown,p2cooldown,p1canjump,p2canjupm
-        observation=[abs(self.player1.pos_x - self.player2.pos_x),
-                     abs(self.player1.pos_y - self.player2.pos_y),
+        observation=[self.player1.pos_x - self.player2.pos_x,
+                     self.player1.pos_y - self.player2.pos_y,
                      self.player1.pos_x,
                      self.player1.pos_y,
                      self.player2.pos_x,
@@ -211,12 +227,16 @@ class MyEnv(gym.Env):
                      self.player1.damage,
                      self.player2.damage]
 
-
         if done == False:
-            reward -= 1
+            # reward -= (t/10000) *(t/10000)
             # 敵との距離で報酬変化
-            dist_x = abs(self.player1.pos_x - self.player2.pos_x)
-            reward -= dist_x / 100
+            dist_x = abs(self.player1.pos_x - old_enemy_x)
+            # if old_dist_x > dist_x:
+            #     reward += 0.03
+            if dist_x > 300:
+                reward -= (dist_x / 500)
+            reward -= 0.01
+
 
         # 今回の例ではtruncatedは使用しない
         truncated = False
@@ -224,6 +244,222 @@ class MyEnv(gym.Env):
         info = {}
         # print(reward)
         return np.array(observation, dtype=np.float32),reward,done,truncated,info
+
+    def step_play(self, action_indexs,t):
+        # action_indexs:player1のactionindex,player2のactionindex,
+        # 行動を受け取り行動後の状態をreturnする
+        # stepメソッドは、action_spaceで定義された型に沿った行動値を受け取り、環境を1ステップだけ進めます。
+        # 進めた後の観測、報酬、終了判定、その他の情報を生成し、リターンします。
+        # infoにはデバックに役立つ情報などを辞書型として格納することができます。
+        # 唯一、自由に使える変数なので、存分にinfoを活用しましょう。
+
+        # observation ：object型。observation_spaceで設定した通りのサイズ・型のデータを格納。
+        # reward ：float型。reward_rangeで設定した範囲内の値を格納。
+        # done ：bool型。エピソードの終了判定。
+        # info ：dict型。デバッグに役立つ情報など自由に利用可能。
+
+        done=False
+
+
+        old_me_x = self.player1.pos_x
+        old_enemy_x = self.player2.pos_x
+
+        self.player1.controlfromAction(action_indexs[0])
+        # self.player2.controlfromAction(action_indexs[1])
+        # self.player2.controlrandomNotAction()
+        # self.player2.controlrandom()
+        # control_character_random(self.player2)
+
+        self.player1.contact_judgment(self.player2)
+        self.player2.contact_judgment(self.player1)
+
+        self.player1.move()
+        self.player2.move()
+
+        self.player1.contact_judgment(self.player2)
+        self.player2.contact_judgment(self.player1)
+
+        self.player1.character_action(self.player2)
+        self.player2.character_action(self.player1)
+
+        reward = 0
+
+        # 攻撃したかどうかで報酬変化
+        if any(self.player2.hit_judg):
+            reward += 5
+        if any(self.player1.hit_judg):
+            reward -= 5
+        # 攻撃が不発なら報酬変化
+        if self.player1.misfire:
+            reward -= -2
+        # if enemy.misfire:
+        #     reward += 2
+        # 死んだかどうかで報酬変化
+        if self.player1.damage >= self.player_max_damage:
+            reward = -30
+            print("lose----------------------------------------------")
+            done = True
+        if self.player2.damage >= self.player_max_damage:
+            reward = 30
+            print("win----------------------------------------------")
+            done = True
+
+        self.player1.hit_action()
+        self.player2.hit_action()
+
+        self.player1.contact_judgment(self.player2)
+        self.player2.contact_judgment(self.player1)
+
+        inattackrange = 0
+        if self.player1.pos_x > self.player2.pos_x:
+            circle_pos = (self.player1.pos_x, self.player1.pos_y + self.player1.height // 2)
+            enemy_hit_pos = (self.player2.pos_x + self.player2.pos_x / 2, self.player2.pos_y + self.player2.height / 2)
+        else:
+            circle_pos = (self.player1.pos_x + self.player1.width, self.player1.pos_y + self.player1.height // 2)
+            enemy_hit_pos = (self.player2.pos_x, self.player2.pos_y + self.player2.height / 2)
+        if 0 <= dist(circle_pos,enemy_hit_pos) <= self.radius + self.player2.height / 2:
+            inattackrange = 1
+
+        # 水平距離，垂直距離，P1x,P1y,P2x,P2y,inattackrange,p1cooldown,p2cooldown,p1canjump,p2canjupm
+        observation=[self.player1.pos_x - self.player2.pos_x,
+                     self.player1.pos_y - self.player2.pos_y,
+                     self.player1.pos_x,
+                     self.player1.pos_y,
+                     self.player2.pos_x,
+                     self.player2.pos_y,
+                     inattackrange,
+                     self.player1.rigit_time,
+                     self.player2.rigit_time,
+                     self.player1.damage,
+                     self.player2.damage]
+
+        if done == False:
+            # reward -= (t/10000) *(t/10000)
+            # 敵との距離で報酬変化
+            dist_x = abs(self.player1.pos_x - old_enemy_x)
+            # if old_dist_x > dist_x:
+            #     reward += 0.03
+            # if dist_x > 300:
+            #     reward -= (dist_x / 500)
+            reward -= dist_x / 1000
+            reward -= 0.5
+
+
+        # 今回の例ではtruncatedは使用しない
+        truncated = False
+        # 今回の例ではinfoは使用しない
+        info = {}
+        # print(reward)
+        return np.array(observation, dtype=np.float32),reward,done,truncated,info
+
+
+
+    # def step(self, action_indexs,t):
+    #     # action_indexs:player1のactionindex,player2のactionindex,
+    #     # 行動を受け取り行動後の状態をreturnする
+    #     # stepメソッドは、action_spaceで定義された型に沿った行動値を受け取り、環境を1ステップだけ進めます。
+    #     # 進めた後の観測、報酬、終了判定、その他の情報を生成し、リターンします。
+    #     # infoにはデバックに役立つ情報などを辞書型として格納することができます。
+    #     # 唯一、自由に使える変数なので、存分にinfoを活用しましょう。
+
+    #     # observation ：object型。observation_spaceで設定した通りのサイズ・型のデータを格納。
+    #     # reward ：float型。reward_rangeで設定した範囲内の値を格納。
+    #     # done ：bool型。エピソードの終了判定。
+    #     # info ：dict型。デバッグに役立つ情報など自由に利用可能。
+
+    #     done=False
+
+
+    #     old_me_x = self.player1.pos_x
+    #     old_enemy_x = self.player2.pos_x
+
+    #     self.player1.controlfromAction(action_indexs[0])
+    #     self.player2.controlfromAction(action_indexs[1])
+    #     # self.player2.controlrandomNotAction()
+    #     # self.player2.controlrandom()
+    #     # control_character_random(self.player2)
+
+    #     self.player1.contact_judgment(self.player2)
+    #     self.player2.contact_judgment(self.player1)
+
+    #     self.player1.move()
+    #     self.player2.move()
+
+    #     self.player1.contact_judgment(self.player2)
+    #     self.player2.contact_judgment(self.player1)
+
+    #     self.player1.character_action(self.player2)
+    #     self.player2.character_action(self.player1)
+
+    #     reward = 0
+
+    #     # 攻撃したかどうかで報酬変化
+    #     if any(self.player2.hit_judg):
+    #         reward += 4
+    #     if any(self.player1.hit_judg):
+    #         reward -= 3.7
+    #     # # 攻撃が不発なら報酬変化
+    #     # if me.misfire:
+    #     #     reward -= 0.01
+    #     # if enemy.misfire:
+    #     #     reward += 2
+    #     # 死んだかどうかで報酬変化
+    #     if self.player1.damage >= self.player_max_damage:
+    #         reward = -10
+    #         print("lose----------------------------------------------")
+    #         done = True
+    #     if self.player2.damage >= self.player_max_damage:
+    #         reward = 10
+    #         print("win----------------------------------------------")
+    #         done = True
+
+    #     self.player1.hit_action()
+    #     self.player2.hit_action()
+
+    #     self.player1.contact_judgment(self.player2)
+    #     self.player2.contact_judgment(self.player1)
+
+    #     inattackrange = 0
+    #     if self.player1.pos_x > self.player2.pos_x:
+    #         circle_pos = (self.player1.pos_x, self.player1.pos_y + self.player1.height // 2)
+    #         enemy_hit_pos = (self.player2.pos_x + self.player2.pos_x / 2, self.player2.pos_y + self.player2.height / 2)
+    #     else:
+    #         circle_pos = (self.player1.pos_x + self.player1.width, self.player1.pos_y + self.player1.height // 2)
+    #         enemy_hit_pos = (self.player2.pos_x, self.player2.pos_y + self.player2.height / 2)
+    #     if 0 <= dist(circle_pos,enemy_hit_pos) <= self.radius + self.player2.height / 2:
+    #         inattackrange = 1
+
+    #     # 水平距離，垂直距離，P1x,P1y,P2x,P2y,inattackrange,p1cooldown,p2cooldown,p1canjump,p2canjupm
+    #     observation=[self.player1.pos_x - self.player2.pos_x,
+    #                  self.player1.pos_y - self.player2.pos_y,
+    #                  self.player1.pos_x,
+    #                  self.player1.pos_y,
+    #                  self.player2.pos_x,
+    #                  self.player2.pos_y,
+    #                  inattackrange,
+    #                  self.player1.rigit_time,
+    #                  self.player2.rigit_time,
+    #                  self.player1.damage,
+    #                  self.player2.damage]
+
+    #     if done == False:
+    #         # reward -= (t/10000) *(t/10000)
+    #         # 敵との距離で報酬変化
+    #         dist_x = abs(self.player1.pos_x - old_enemy_x)
+    #         # if old_dist_x > dist_x:
+    #         #     reward += 0.03
+    #         if dist_x > 300:
+    #             reward -= (dist_x / 500)
+    #         # reward -= dist_x / 100
+    #         reward -= 0.01
+
+
+    #     # 今回の例ではtruncatedは使用しない
+    #     truncated = False
+    #     # 今回の例ではinfoは使用しない
+    #     info = {}
+    #     # print(reward)
+    #     return np.array(observation, dtype=np.float32),reward,done,truncated,info
 
     def render(self):
         if self.render_mode is None:
@@ -265,10 +501,10 @@ class MyEnv(gym.Env):
         # lifeゲージの描画
         gfxdraw.rectangle(self.surf, (570, 20, 400, 30), (120, 120, 120))
         if self.player1.damage < self.player_max_damage:
-            gfxdraw.box(self.surf, (575, 25, self.player_max_damage - self.player1.damage, 20),self.player1_color)
+            gfxdraw.rectangle(self.surf, (575, 25, self.player_max_damage - self.player1.damage, 20),self.player1_color)
         gfxdraw.rectangle(self.surf, (30, 20, 400, 30), (120, 120, 120))
         if self.player2.damage < self.player_max_damage:
-            gfxdraw.box(self.surf, (35 + self.player2.damage, 25, self.player_max_damage - self.player2.damage, 20),self.player2_color)
+            gfxdraw.rectangle(self.surf, (35 + self.player2.damage, 25, self.player_max_damage - self.player2.damage, 20),self.player2_color)
 
         self.surf = pygame.transform.flip(self.surf, False, False)
         self.screen.blit(self.surf, (0, 0))

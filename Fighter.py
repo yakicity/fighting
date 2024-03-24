@@ -62,9 +62,9 @@ class Fighter:
         self.blow_speed = 0
         self.actionrigit = 0
 
-        self.damage_to_enemy = 39
-        self.rigit_time_amount_to_enemy = 20
-        self.rigit_time_amount = 80
+        self.damage_to_enemy = 78
+        self.rigit_time_amount_to_enemy = 150
+        self.rigit_time_amount = 200
         self.blow_speed_to_enemy = 10
 
         self.circle_pos = None
@@ -99,6 +99,33 @@ class Fighter:
         elif actionindex == 6:
             self.player_move[2] = True
             self.direction = 2
+
+    def controlfromAction_new(self,actionindexs):
+        player_move_up = self.player_move[0]
+
+        self.action = [False, False, False, False]
+        self.player_move = [False, False, False, False]
+        # 移動：「上」「左」「右」「移動なし」，攻撃：「弱攻撃する」「しない」
+        # 上する，左する，右する，する，上しない，，，，，
+        if actionindexs[0] == 0:
+            self.player_move[0] = True if self.canMoveRange[0] == 0 else player_move_up
+        elif actionindexs[0] == 1:
+            self.player_move[3] = True
+            self.direction = 3
+        elif actionindexs[0] == 2:
+            self.player_move[2] = True
+            self.direction = 2
+        elif actionindexs[0] == 3:
+            self.player_move[3] = True
+
+        if actionindexs[1] == 0:
+            self.action[0] = True
+        elif actionindexs[1] == 1:
+            self.action[1] = True
+        elif actionindexs[1] == 2:
+            self.action[2] = True
+        elif actionindexs[1] == 3:
+            self.action[3] = True
 
     def controlrandomNotAction(self):
         player_move_up = self.player_move[0]

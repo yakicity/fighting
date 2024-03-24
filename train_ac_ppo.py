@@ -10,22 +10,16 @@ from collections import deque
 import random
 import numpy as np
 import gymnasium as gym
-# ニューラルネットワークモデルのインポート
-from sklearn.neural_network import MLPRegressor
-# ACAgentクラスの作成
-from sklearn.exceptions import NotFittedError
 import joblib
-
+import math
 from env import MyEnv
+from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical, Normal
-import math
-import time
-from datetime import timedelta
 
 
 # Observerクラスの作成
@@ -38,32 +32,38 @@ class Observer(object):
     def render(self): # 状態などを可視化するメソッド
         self.env.render()
 
-    def reset(self): # 環境を初期化して初期状態を返すメソッド
-        return self.preprocess(self.env.reset()[0])
+    def reset(self,meind): # 環境を初期化して初期状態を返すメソッド
+        return self.preprocess(self.env.reset(meind)[0])
 
-    def step(self, action): # 行動を渡して前処理した状態と報酬などを返すメソッド
-        # print(action)
-        state, reward, done, _, info = self.env.step(action)
-        print(state)
+    def step(self, actions,t): # player1の行動を渡して前処理した状態と報酬などを返すメソッド
+        # meind:学習したいモデルはplayer1か2のどちらか
+        # print(actions[0])
+        action_ind_1 = self.get_actionind(actions[0])
+        action_ind_2 = self.get_actionind(actions[1])
+        state, reward, done, _, info = self.env.step([action_ind_1,action_ind_2],t)
         return self.preprocess(state), reward, done, info
     def preprocess(self, state):
         return state.reshape((1, 11))
+    def get_actionind(self,action):
+        if action < -0.75:
+            action_index = 0
+        elif -0.75 <= action < -0.50:
+            action_index = 1
+        elif -0.50 <= action < -0.25:
+            action_index = 2
+        elif -0.25 <= action < 0:
+            action_index = 3
+        elif 0 <= action < 0.25:
+            action_index = 4
+        elif 0.25 <= action < 0.5:
+            action_index = 5
+        elif 0.5 <= action < 0.75:
+            action_index = 6
+        else:
+            action_index = 7
+        return action_index
 
-class ReplayBuffer:
-    def __init__(self, buffer_size, batch_size):
-        self.buffer = deque(maxlen=buffer_size)
-        self.batch_size = batch_size
 
-    def add(self, state, action, reward, new_state,done):
-        data = (state, action, reward, new_state,done)
-        self.buffer.append(data)
-
-    def __len__(self):
-        return len(self.buffer)
-
-    def get_batch(self):
-        idx = np.random.choice(np.arange(len(self.buffer)), size=self.batch_size, replace=False)
-        return [self.buffer[ii] for ii in idx]
 
 def calculate_log_pi(log_stds, noises, actions):
     """ 確率論的な行動の確率密度を返す． """
@@ -87,6 +87,7 @@ def reparameterize(means, log_stds):
     us = means + noises * stds
     # tanhを適用し，確率論的な行動を計算する．
     actions = torch.tanh(us)
+    #actions: tensor([[-0.7921, -0.3043, -0.9760, -0.0331, -0.1126, -0.7721, -0.4479, -0.2793]],device='cuda:0')
 
     # 確率論的な行動の確率密度の対数を計算する．
     log_pis = calculate_log_pi(log_stds, noises, actions)
@@ -120,6 +121,7 @@ class PPOActor(nn.Module):
         return torch.tanh(self.net(states))
 
     def sample(self, states):
+        # print("sample",self.net(states))
         return reparameterize(self.net(states), self.log_stds)
 
     def evaluate_log_pi(self, states, actions):
@@ -183,6 +185,11 @@ class RolloutBuffer:
         self.buffer_size = buffer_size
 
     def append(self, state, action, reward, done, log_pi, next_state):
+
+        state = np.array(state[0])
+        action =  np.array(action[0])
+        next_state =  np.array(next_state[0])
+
         self.states[self._p].copy_(torch.from_numpy(state))
         self.actions[self._p].copy_(torch.from_numpy(action))
         self.rewards[self._p] = float(reward)
@@ -252,6 +259,21 @@ class PPO:
         self.max_grad_norm = max_grad_norm
         self.max_action = max_action
 
+    def save_model(self,actor_path,critic_path):
+        # 重みとバイアスのみ保存
+        torch.save(self.actor.state_dict(),actor_path)
+        torch.save(self.critic.state_dict(), critic_path)
+
+    # 必ずPPOクラスをiniしてからこれを呼び出す
+    def load_model(self,actor_path,critic_path):
+        # 重みの読み込み
+        self.actor.load_state_dict(torch.load(actor_path, map_location=self.device))
+        self.critic.load_state_dict(torch.load(critic_path, map_location=self.device))
+
+    def model_not_train(self):
+        self.actor.eval()
+        self.critic.eval()
+
     def is_update(self, steps):
         # ロールアウト1回分のデータが溜まったら学習する．
         return steps % self.horizon == 0
@@ -261,6 +283,7 @@ class PPO:
         state = torch.tensor(state, dtype=torch.float, device=self.device).unsqueeze_(0)
         with torch.no_grad():
             action, log_pi = self.actor.sample(state) # ともにtorch.Size([1, 1])
+            # print(action,log_pi)
         return action.cpu().numpy()[0] * self.max_action, log_pi.item()
 
     def exploit(self, state):
@@ -275,33 +298,6 @@ class PPO:
         with torch.no_grad():
             value = self.critic(state)
         return value.cpu().numpy()[0]
-
-    def step(self, env, state, t, steps):
-        t += 1
-
-        action, log_pi = self.explore(state)
-        next_state, reward, done, _ = env.step(action)
-
-        # ゲームオーバーではなく，最大ステップ数に到達したことでエピソードが終了した場合は，
-        # 本来であればその先も試行が継続するはず．よって，終了シグナルをFalseにする．
-        # NOTE: ゲームオーバーによってエピソード終了した場合には， done_masked=True が適切．
-        # しかし，以下の実装では，"たまたま"最大ステップ数でゲームオーバーとなった場合には，
-        # done_masked=False になってしまう．
-        # その場合は稀で，多くの実装ではその誤差を無視しているので，今回も無視する．
-        if t == env._max_episode_steps:
-            done_masked = False
-        else:
-            done_masked = done
-
-        # バッファにデータを追加する．
-        self.buffer.append(state, action, reward, done_masked, log_pi, next_state)
-
-        # エピソードが終了した場合には，環境をリセットする．
-        if done:
-            t = 0
-            next_state = env.reset()
-
-        return next_state, t
 
     def update(self):
         self.learning_steps += 1
@@ -356,33 +352,9 @@ class PPO:
         nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         self.optim_actor.step()
 
-# 平均収益を保存するための辞書．
-returns = {'step': [], 'return': []}
-
-def evaluate_policy(steps, eval_episodes=3):
-    """ 複数エピソード環境を動かし，平均収益を記録する． """
-    _returns = []
-    for _ in range(eval_episodes):
-        state = env_test.reset()
-        done = False
-        episode_return = 0.0
-
-        while (not done):
-            action = algo.exploit(state)
-            state, reward, done, _ = env_test.step(action)
-            episode_return += reward
-
-        _returns.append(episode_return)
-
-    mean_return = np.mean(_returns)
-    returns['step'].append(steps)
-    returns['return'].append(mean_return)
-
-    print(f'Num steps: {steps:<6}   '
-            f'Return: {mean_return:<5.1f}   '
-            f'Time elapsed: {str(timedelta(seconds=int(time() - start_time)))}')
 
 if __name__ == "__main__":
+
 
     rewards = []
 
@@ -391,22 +363,21 @@ if __name__ == "__main__":
     buffer_length = 512
     batch_size = 128
 
-    num_average_epidodes = 1
+    num_average_epidodes = 10
     # buffer_length = 128
     # batch_size = 16
 
+    player_info = ["cpu","random"]
+
     env = MyEnv(render_mode="human")
-    env_test = MyEnv(render_mode="human")
     # env = MyEnv()
-    observer = Observer(env) # Observer作成
-    observer_test = Observer(env_test) # Observer作成
+
     # agent = ACAgent(actions = [0,1,2,3,4,5,6,7])
-    actions = np.array([0,1,2,3,4,5,6,7])
+    actions = np.arange(1)
     observation_space = np.arange(11)
 
     # replayBuffer = ReplayBuffer(buffer_length,batch_size)
     max_steps = 10000 # エピソードの最大ステップ数
-    state = observer.reset() # observerを初期化し、前処理済みの初期状態を返す
 
     # ---------------
     # agent.load_models()
@@ -419,35 +390,87 @@ if __name__ == "__main__":
     # 評価の間のステップ数(インターバル)．
     EVAL_INTERVAL = 10 ** 3
 
+    num_episodes = 200
+    eval_episodes = 10
+
+    # print(observation_space.shape)
     algo = PPO(
-        state_shape=actions.shape,
-        action_shape=observation_space.shape,
+        state_shape=observation_space.shape,
+        action_shape=actions.shape,
         seed=SEED,
     )
 
-    # 学習開始の時間
-    start_time = time()
-    # エピソードのステップ数
-    t = 0
+    # algo.load_model("model_weight_actor1.pth","model_weight_critic1.pth")
 
-    # 環境を初期化する
-    state = observer.reset()
+    algo_enemy = PPO(
+        state_shape=observation_space.shape,
+        action_shape=actions.shape,
+        seed=SEED,
+    )
+    # algo_enemy.load_model("model_weight_actor1.pth","model_weight_critic1.pth")
+    # algo_enemy.model_not_train()
+
+    observer = Observer(env) # Observer作成
+    # state = observer.reset() # observerを初期化し、前処理済みの初期状態を返す
+
 
     """メインループ"""
-    for steps in range(1, NUM_STEPS+1):
-        # 環境(env)，現在の状態(state)，現在のエピソードのステップ数(t)，今までのトータルのステップ数(steps)を
-        # アルゴリズムに渡し，状態・エピソードのステップ数を更新する．
-        state, t = algo.step(observer, state, t, steps)
+    for episode in range(1,num_episodes+1):
+        if episode % 2 == 0:
+            meind = 1
+        else:
+            meind = 2
+        state = observer.reset(meind) # observerを初期化し、前処理済みの初期状態を返す
+        done = False # エピソードの終了フラグ
+        reward_per_episode = 0 # 1エピソード当たりの報酬の総和
+        t = 0
 
-        # アルゴリズムの準備ができていれば（ロールアウト1回分のデータが溜まっていたら）, 1回学習を行う.
-        if algo.is_update(steps):
-            algo.update()
+        while (not done): # エピソードが終了しない間はずっと処理を行う
+
+            t += 1
+
+            me_action, log_pi = algo.explore(state[0])
+            if player_info[1] == "random":
+                enemy_action = np.random.uniform(-1,1)
+            elif player_info[1] == "cpu":
+                # ここにstateのmeとenamyいれかえたstate[0]をもとめる処理角
+                enemy_state = [state[0][0],state[0][1],state[0][4],state[0][5],state[0][2],state[0][3],state[0][0],state[0][8],state[0][7],state[0][10],state[0][9]]
+                enemy_state = np.array(enemy_state, dtype=np.float32)
+                enemy_action = algo_enemy.exploit(enemy_state)[0]
+
+            next_state, reward, done, _ = observer.step([me_action[0],enemy_action],t)
+
+            # ゲームオーバーではなく，最大ステップ数に到達したことでエピソードが終了した場合は，
+            # 本来であればその先も試行が継続するはず．よって，終了シグナルをFalseにする．
+            # NOTE: ゲームオーバーによってエピソード終了した場合には， done_masked=True が適切．
+            # しかし，以下の実装では，"たまたま"最大ステップ数でゲームオーバーとなった場合には，
+            # done_masked=False になってしまう．
+            # その場合は稀で，多くの実装ではその誤差を無視しているので，今回も無視する．
+            # if t == env._max_episode_steps:
+            #     done_masked = False
+            # else:
+            done_masked = done
+            # バッファにデータを追加する．
+            algo.buffer.append(state, me_action, reward, done_masked, log_pi, next_state)
+            state = next_state
+
+            # state, t,reward,done = algo.step(observer, state, t, episode)
+            # アルゴリズムの準備ができていれば（ロールアウト1回分のデータが溜まっていたら）, 1回学習を行う.
+            # if episode % num_episodes == 0:
+            #     observer.render()
+            if algo.is_update(t):
+                print("=======================")
+                algo.update()
+                print(episode,t,state[0][-1],state[0][-2],)
+            reward_per_episode += reward # 獲得報酬を計算
 
         # 一定のインターバルで評価する.
-        if steps % EVAL_INTERVAL == 0:
-            evaluate_policy(steps)
-        if steps % EVAL_INTERVAL == 0:
-            observer.render()
+        if episode % eval_episodes == 0:
+            algo.save_model(f'model_weight_actor1_{episode}.pth',f'model_weight_critic1_{episode}.pth')
+
+        rewards.append(reward_per_episode) # appendメソッドで獲得した報酬を格納
+
+
 
     # # モデルをsaveしたい
     # joblib.dump(agent.model['actor'], 'actor.pkl') # actorのモデルを'actor.pkl'に保存する
@@ -455,31 +478,9 @@ if __name__ == "__main__":
     # 学習曲線の描画
     import matplotlib.pyplot as plt # matplotlib.pyplotのインポート
 
-    # plt.plot(rewards) # 報酬の折れ線グラフの描画
-    # plt.title('Train Curve', fontsize=20) # タイトルを設定
-    # plt.ylabel('Rewards', fontsize=20) # 縦軸のラベルを設定
-    # plt.xlabel('Episode', fontsize=20) # 横軸のラベルを指定
-    # plt.show() # グラフを表示
     moving_average = np.convolve(rewards, np.ones(num_average_epidodes)/num_average_epidodes, mode='valid')
     plt.plot(np.arange(len(moving_average)),moving_average)
     plt.title('Actor-Critic: average rewards in %d episodes' % num_average_epidodes)
     plt.xlabel('episode')
     plt.ylabel('rewards')
     plt.show()
-
-    env.close()
-
-
-
-
-    # # actions = [7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7]
-    # actions = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
-    # for action in actions: # 定義した行動のリストを逐次的に入力していく
-    #     new_state, reward, done, info = observer.step(action) # 行動を入力して進める
-    #     print('\n行動:', action)
-    #     print('報酬:', reward)
-    #     print('状態:', new_state)
-    #     print(observer.render()) # 状態の可視化
-    #     if done: # 終了判定(done)がTrueとなった場合終了
-    #         env.close()
-    #         break
